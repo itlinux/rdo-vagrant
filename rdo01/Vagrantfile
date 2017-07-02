@@ -1,0 +1,77 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+# Vagrantfile API/syntax version. Don't touch unless you know what you're doing!
+
+VAGRANTFILE_API_VERSION = "2"
+BOX_NAME = 'russmckendrick/centos7'
+BOX_IP = '192.168.56.101'
+HOSTNAME = 'rdohafw'
+DOMAIN   = 'vagrant.dev'
+Vagrant.require_version '>= 1.4.0'
+Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
+
+config.vm.box = BOX_NAME
+
+config.vm.define :rdo01
+
+config.vm.network :private_network, ip: BOX_IP
+
+config.vm.host_name = HOSTNAME + '.' + DOMAIN
+
+config.vm.synced_folder "./", "/vagrant", id: "vagrant-root",
+    owner: "vagrant",
+    group: "nobody",
+    mount_options: ["dmode=777,fmode=755"]
+
+config.vm.provider "virtualbox" do |v|
+  v.memory = 4096
+  v.cpus = 1
+end
+
+
+config.vm.provider "parallels" do |v, override|
+    override.vm.box = "parallels/centos-7.2"
+    v.memory = 2048
+    v.cpus = 1
+    v.customize ["set", :id, "--nested-virt", "on"]
+  end
+
+config.vm.provider "vmware_fusion" do |v|
+  v.vmx["memsize"] = "4048"
+  v.vmx["numvcpus"] = "4"
+end
+
+$script = <<SCRIPT
+set -e
+set -x
+sudo systemctl stop NetworkManager
+sudo systemctl disable NetworkManager
+sudo systemctl enable network
+sudo yum install -y bash-completion epel-release bind-utils net-tools
+sudo yum install -y https://rdoproject.org/repos/rdo-release.rpm
+sudo yum install -y openstack-packstack
+PASS=yourpassword
+INTERNALIP=$(ifconfig | grep "inet" | grep "10.0.2" | awk '{ print $2 }')
+EXTERNALIP=$(ifconfig | grep "inet" | grep "192.168" | awk '{ print $2 }')
+sudo /usr/bin/packstack --gen-answer-file=/tmp/packstack
+#KEY=$(grep CONFIG_KEYSTONE_ADMIN_PW /tmp/answers |awk -F = '{ print $2 }')
+#sudo sed "s/$KEY/$PASS/g" /tmp/packstack > /tmp/packstack
+sudo sed "s/$INTERNALIP/$EXTERNALIP/g" /tmp/packstack > /tmp/answers-external
+sudo sed -i "s/CONFIG_KEYSTONE_ADMIN_PW=.*/CONFIG_KEYSTONE_ADMIN_PW=$PASS/" /tmp/answers-external
+sudo sed -i "s/CONFIG_LBAAS_INSTALL=n/CONFIG_LBAAS_INSTALL=y/" /tmp/answers-external
+sudo sed -i "s/CONFIG_DEFAULT_PASSWORD=/CONFIG_DEFAULT_PASSWORD=$PASS/" /tmp/answers-external
+sudo sed -i "s/CONFIG_NEUTRON_FWAAS=n/CONFIG_NEUTRON_FWAAS=y/" /tmp/answers-external
+#
+sudo /usr/bin/packstack --answer-file=/tmp/answers-external
+
+echo ""
+echo "**** Logins  RDO with LBaaS and FWaaS ******"
+echo ""
+sudo cat /root/keystonerc_admin
+echo ""
+SCRIPT
+
+config.vm.provision "shell",
+    inline: $script
+
+end
